@@ -1,5 +1,8 @@
+The start of this code is demonstrations of basic questions being solved using my SQL skill. The advanced Geospatial relation question is in question 5.
+
+
 ---
-title: "Lab5"
+title: "Geospatial_relation_analytics"
 format: html
 editor: visual
 ---
@@ -17,10 +20,11 @@ library(dplyr)
 ```
 
 ```{r}
-connect<- dbConnect(RSQLite::SQLite(), "Week4lab.sqlite")
+connect<- dbConnect(RSQLite::SQLite(), "nexus_analytics.sqlite")
 ```
 
-QUESTION 1A)
+QUESTION 1A) Obtain the medal count within each year for the Summer olympics. Make a plot of the
+number of athletes who obtained medals per summer olympics. 
 
 ```{r}
 Medal_By_Year<- "SELECT Year, COUNT(*) AS TotalNumber FROM olympics WHERE Season = 'Summer' AND Medal IS NOT NULL GROUP BY Year"
@@ -37,9 +41,8 @@ ggplot(Medal_By_Year_Plotted, aes(x = Year, y = TotalNumber)) + geom_line(color 
 ) + theme_minimal()
 ```
 
-QUESTION 1 B)
-
-I clicked run all and it said that tot_meds already existed so I asked Gemini... it suggested CREATE VIEW IF NOT EXISTS
+QUESTION 1 B) VIEW table with the data frame obtained in Q1a call it. Extract
+it’s metadata
 
 ```{r}
 mov_avg2 <- "CREATE VIEW IF NOT EXISTS tot_meds AS SELECT Year, 
@@ -65,7 +68,8 @@ movingAvg <- movingAvg[, !duplicated(colnames(movingAvg))]
 
 Calculates moving average from table 1 and table 2. -8 is 2 summer games ago and +8 is 2 later from the starting year.
 
-QUESTION 1 C)
+QUESTION 1 C)  Plot the moving average resulting from this query on top of the original data points to
+see how well the moving average performed.
 
 ```{r}
 ggplot(movingAvg, aes(x = Year)) +
@@ -84,18 +88,8 @@ meds <- "SELECT Year, Event, name FROM olympics WHERE NOC = 'CAN' AND Year = 201
 (out <- dbGetQuery(connect, meds))
 ```
 
-QUESTION 2 A)
-
-My code counts the athletes who have won whereas the website counts the sports who won. For example since mens hockey is one sport they count that as one but in mine I count it as the amount of people on the team.
-
-```{r}
-query <- "SELECT COUNT(DISTINCT Event) AS GoldMedals
-FROM olympics WHERE NOC = 'CAN' AND Year = 2010 AND Medal = 'Gold'"
-
-dbGetQuery(connect, query)
-```
-
-B\)
+QUESTION 2 A) SQL query that will provide the number of medals of each type that Canada won
+in the 2010 Olympics.
 
 ```{r}
 meds_by_type <- "SELECT Medal, COUNT(DISTINCT Event) AS MedalCount FROM olympics WHERE NOC = 'CAN' AND Year = 2010 AND Medal IS NOT NULL GROUP BY Medal ORDER BY CASE Medal WHEN 'Gold' THEN 1 WHEN 'Silver' THEN 2 WHEN 'Bronze' THEN 3 END"
@@ -110,7 +104,7 @@ print(out)
 
 Ordered by prestige... and coincidentally by amount.
 
-QUESTION 3:
+QUESTION 3: Created a SQL view named country_medals that grabs all unique Summer Olympic years and LEFT JOINs France's medal records, using COALESCE with COUNT(DISTINCT Event) so years without medal events correctly return zero. Next, I wrote a query on that view that calculates the overall average across all years via a scalar subquery and computes the trailing moving average using a self-join where t2.Year falls between t1.Year - 12 and t1.Year. Finally, I executed the combined SQL query in R with dbGetQuery() to retrieve the pre-calculated results into a dataframe and cleaned up the database by dropping the view.
 
 ```{r}
 dbSendQuery(connect, "DROP VIEW IF EXISTS country_medals")
@@ -155,7 +149,8 @@ ggplot(france_medals, aes(x = Year)) +
   theme_minimal()
 ```
 
-QUESTION 4
+QUESTION 4  SQL to obtain the (10,30,70)𝑡ℎ percentiles of the total number of athletes for each
+countries when the Olympics were in Montreal. Checked answer by pulling everything into R and calculating the quartile.
 
 ```{r}
 montreal_view <- "CREATE VIEW montreal_athletes AS 
@@ -191,7 +186,8 @@ quantile(all_montreal$TotalAthletes, probs = c(0.10, 0.30, 0.70))
 dbSendQuery(connect, "DROP VIEW IF EXISTS montreal_athletes")
 ```
 
-QUESTION 5 A)
+QUESTION 5 A)  Histogram of the standardized population counts after removing Canada from
+the population 2016 table. 
 
 ```{r}
 dbSendQuery(connect, "DROP VIEW IF EXISTS pop_no_canada")
@@ -226,7 +222,7 @@ ggplot(pop_zscores, aes(x = z_score_pop)) +
 ggsave("assets/population_zscores.png", width = 8, height = 5, dpi = 300)
 ```
 
-QUESTION 5 B)
+QUESTION 5 B) Plot the locations and the 2D density of ground type pokemon on a map of Vancouver
 
 ```{r}
 ground_poke_query <- "
@@ -268,52 +264,4 @@ dbSendQuery(connect, "DROP VIEW IF EXISTS tot_meds")
 
 ```{r}
 dbListTables(connect)
-```
-
-```{r}
-
-# 1. Save Population Z-Scores Plot
-pop_data <- dbGetQuery(connect, 'SELECT Geographic_name, "Population__2016" FROM POP2016 WHERE Geographic_name != "Canada"')
-pop_data <- pop_data %>%
-  mutate(
-    mean_val = mean(Population__2016, na.rm = TRUE),
-    sd_val = sd(Population__2016, na.rm = TRUE),
-    z_score_pop = (Population__2016 - mean_val) / sd_val
-  )
-
-p_pop <- ggplot(pop_data, aes(x = z_score_pop)) +
-  geom_histogram(bins = 15, fill = "steelblue", color = "white", na.rm = TRUE) +
-  labs(
-    title = "Histogram of Standardized 2016 Regional Populations",
-    subtitle = "Excluding Canada to remove extreme skewness",
-    x = "Z-Score (Standardized Population)",
-    y = "Frequency"
-  ) +
-  theme_minimal()
-
-ggsave("assets/population_zscores.png", plot = p_pop, width = 8, height = 5, dpi = 300)
-
-# 2. Save Vancouver Pokémon Density Plot
-ground_poke_query <- "
-SELECT v.latitude, v.longitude, v.name
-FROM vancouver_po_go AS v
-JOIN pokemon_by_gen AS p ON LOWER(v.name) = LOWER(p.name)
-WHERE p.type1 = 'ground' OR p.type2 = 'ground';
-"
-ground_poke <- dbGetQuery(connect, ground_poke_query)
-
-p_poke <- ggplot(ground_poke, aes(x = longitude, y = latitude)) +
-  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.4) +
-  geom_point(color = "saddlebrown", size = 1.5, alpha = 0.8) +
-  scale_fill_viridis_c(option = "plasma") +
-  labs(
-    title = "Vancouver Ground-Type Pokémon Density & Locations",
-    subtitle = "2D Density Contour and Geographic Coordinates",
-    x = "Longitude",
-    y = "Latitude",
-    fill = "Density Level"
-  ) +
-  theme_minimal()
-
-ggsave("assets/vancouver_kde_density.png", plot = p_poke, width = 8, height = 5, dpi = 300)
 ```
