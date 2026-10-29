@@ -1,0 +1,319 @@
+---
+title: "Lab5"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+```{r}
+library(DBI)
+library(RSQLite)
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+```
+
+```{r}
+connect<- dbConnect(RSQLite::SQLite(), "Week4lab.sqlite")
+```
+
+QUESTION 1A)
+
+```{r}
+Medal_By_Year<- "SELECT Year, COUNT(*) AS TotalNumber FROM olympics WHERE Season = 'Summer' AND Medal IS NOT NULL GROUP BY Year"
+```
+
+get the year and count the amount to total number. extract the info from olympic summer and if they have not won a medal call it null.
+
+```{r}
+Medal_By_Year_Plotted<- dbGetQuery(connect, Medal_By_Year)
+```
+
+```{r}
+ggplot(Medal_By_Year_Plotted, aes(x = Year, y = TotalNumber)) + geom_line(color = "firebrick4") + geom_point(colour = "salmon1") + labs(title ="Total Medalists per Summer Olympics", x = "Year", y = "Number of Medalists"
+) + theme_minimal()
+```
+
+QUESTION 1 B)
+
+I clicked run all and it said that tot_meds already existed so I asked Gemini... it suggested CREATE VIEW IF NOT EXISTS
+
+```{r}
+mov_avg2 <- "CREATE VIEW IF NOT EXISTS tot_meds AS SELECT Year, 
+COUNT(*) AS TotalNumber FROM olympics WHERE Season 
+= 'Summer' AND Medal IS NOT NULL GROUP BY Year"
+dbSendQuery(connect, mov_avg2)
+```
+
+```{r}
+dbGetQuery(connect, "PRAGMA table_info(tot_meds)")
+```
+
+```{r}
+check <- "SELECT * FROM tot_meds AS t1 INNER JOIN (SELECT t1.Year, AVG(t2.TotalNumber) AS mavg FROM tot_meds AS t1, tot_meds AS t2 WHERE t2.Year BETWEEN (t1.Year-8) AND (t1.Year+8) GROUP BY t1.Year) AS sq ON (t1.Year = sq.Year)"
+```
+
+```{r}
+movingAvg <- dbGetQuery(connect, check)
+movingAvg <- movingAvg[, !duplicated(colnames(movingAvg))]
+```
+
+!duplicate was used because in C it said I had repeated column names in moving average.
+
+Calculates moving average from table 1 and table 2. -8 is 2 summer games ago and +8 is 2 later from the starting year.
+
+QUESTION 1 C)
+
+```{r}
+ggplot(movingAvg, aes(x = Year)) +
+  geom_point(aes(y = TotalNumber), color = "salmon1") +
+  geom_line(aes(y = mavg), color = "firebrick4") +
+  labs(
+    title = "Summer Olympics Medalists Over Time",
+    x = "Year",
+    y = "Total Medalists"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+meds <- "SELECT Year, Event, name FROM olympics WHERE NOC = 'CAN' AND Year = 2010 AND Medal =='Gold'"
+(out <- dbGetQuery(connect, meds))
+```
+
+QUESTION 2 A)
+
+My code counts the athletes who have won whereas the website counts the sports who won. For example since mens hockey is one sport they count that as one but in mine I count it as the amount of people on the team.
+
+```{r}
+query <- "SELECT COUNT(DISTINCT Event) AS GoldMedals
+FROM olympics WHERE NOC = 'CAN' AND Year = 2010 AND Medal = 'Gold'"
+
+dbGetQuery(connect, query)
+```
+
+B\)
+
+```{r}
+meds_by_type <- "SELECT Medal, COUNT(DISTINCT Event) AS MedalCount FROM olympics WHERE NOC = 'CAN' AND Year = 2010 AND Medal IS NOT NULL GROUP BY Medal ORDER BY CASE Medal WHEN 'Gold' THEN 1 WHEN 'Silver' THEN 2 WHEN 'Bronze' THEN 3 END"
+
+
+```
+
+```{r}
+out<- dbGetQuery(connect, meds_by_type)
+print(out)
+```
+
+Ordered by prestige... and coincidentally by amount.
+
+QUESTION 3:
+
+```{r}
+dbSendQuery(connect, "DROP VIEW IF EXISTS country_medals")
+```
+
+```{r}
+dbExecute(connect, "DROP VIEW IF EXISTS country_medals")
+france_view <- "CREATE VIEW country_medals AS SELECT y.Year, COALESCE(COUNT(DISTINCT o.Event), 0) AS TotalMedalEvents FROM (
+SELECT DISTINCT Year FROM olympics WHERE season = 'Summer') AS y
+LEFT JOIN olympics AS o ON y.Year = o.Year AND o.NOC = 'FRA' AND o.season = 'Summer' AND o.Medal IS NOT NULL GROUP BY y.Year"
+dbExecute(connect, france_view)
+```
+
+```{r}
+total_meds <- "SELECT t1.Year, t1.TotalMedalEvents, sq.TrailingAvg,
+(SELECT AVG(TotalMedalEvents) FROM country_medals) AS OverallAvg
+FROM country_medals AS t1 INNER JOIN (SELECT t1.Year, 
+AVG(t2.TotalMedalEvents) AS TrailingAvg FROM country_medals AS t1, country_medals AS t2 WHERE t2.Year BETWEEN (t1.Year - 12) AND t1.Year GROUP BY t1.Year
+) AS sq ON (t1.Year = sq.Year) ORDER BY t1.Year"
+```
+
+```{r}
+france_medals <- dbGetQuery(connect, total_meds)
+```
+
+```{r}
+dbSendQuery(connect, "DROP VIEW IF EXISTS country_medals")
+```
+
+```{r}
+ggplot(france_medals, aes(x = Year)) +
+  geom_point(aes(y = TotalMedalEvents)) +
+  geom_line(aes(y = TotalMedalEvents), linetype = "dashed") +
+  geom_line(aes(y = TrailingAvg), color = "blue", linewidth = 1) +
+  geom_hline(aes(yintercept = OverallAvg), color = "red", linetype = "solid") +
+  labs(
+    title = "France Summer Olympics Medal Events",
+    subtitle = "Black Points/Dashed: Total Medals | Blue Line: Trailing Moving Average [t-12, t] | Red Line: Overall Mean",
+    x = "Year",
+    y = "Number of Medal Events"
+  ) +
+  theme_minimal()
+```
+
+QUESTION 4
+
+```{r}
+montreal_view <- "CREATE VIEW montreal_athletes AS 
+  SELECT NOC, COUNT(*) AS TotalAthletes 
+  FROM olympics 
+  WHERE City = 'Montreal' 
+  GROUP BY NOC"
+dbSendQuery(connect, montreal_view)
+```
+
+```{r}
+n_countries <- dbGetQuery(connect, "SELECT COUNT(*) AS total FROM montreal_athletes")$total
+```
+
+```{r}
+perc_10th <- sprintf("SELECT TotalAthletes AS P10 FROM montreal_athletes ORDER BY TotalAthletes ASC LIMIT 1 OFFSET %d", round(n_countries * 0.10))
+perc_30th <- sprintf("SELECT TotalAthletes AS P30 FROM montreal_athletes ORDER BY TotalAthletes ASC LIMIT 1 OFFSET %d", round(n_countries * 0.30))
+perc_70th <- sprintf("SELECT TotalAthletes AS P70 FROM montreal_athletes ORDER BY TotalAthletes ASC LIMIT 1 OFFSET %d", round(n_countries * 0.70))
+```
+
+```{r}
+dbGetQuery(connect, perc_10th)
+dbGetQuery(connect, perc_30th)
+dbGetQuery(connect, perc_70th)
+```
+
+```{r}
+all_montreal <- dbGetQuery(connect, "SELECT TotalAthletes FROM montreal_athletes")
+quantile(all_montreal$TotalAthletes, probs = c(0.10, 0.30, 0.70))
+```
+
+```{r}
+dbSendQuery(connect, "DROP VIEW IF EXISTS montreal_athletes")
+```
+
+QUESTION 5 A)
+
+```{r}
+dbSendQuery(connect, "DROP VIEW IF EXISTS pop_no_canada")
+dbSendQuery(connect, " CREATE VIEW pop_no_canada AS SELECT Geographic_name, Population__2016 FROM POP2016 WHERE Geographic_name != 'Canada'")
+```
+
+```{r}
+region_zscore <- "
+WITH pop_stats AS (
+SELECT AVG(Population__2016) AS mean, stdev(Population__2016) AS sd FROM pop_no_canada)
+SELECT n.Geographic_name, n.Population__2016, s.mean, s.sd,
+(n.Population__2016 - s.mean) / s.sd AS z_score_pop
+FROM pop_no_canada AS n, pop_stats AS s
+"
+```
+
+```{r}
+pop_zscores <- dbGetQuery(connect, region_zscore)
+dbSendQuery(connect, "DROP VIEW IF EXISTS pop_no_canada")
+```
+
+```{r}
+ggplot(pop_zscores, aes(x = z_score_pop)) +
+  geom_histogram(bins = 15, fill = "steelblue", color = "white",na.rm = TRUE) +
+  labs(
+    title = "Histogram of Standardized 2016 Regional Populations",
+    subtitle = "Excluding Canada to remove extreme skewness",
+    x = "Z-Score (Standardized Population)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+ggsave("assets/population_zscores.png", width = 8, height = 5, dpi = 300)
+```
+
+QUESTION 5 B)
+
+```{r}
+ground_poke_query <- "
+  SELECT v.latitude, v.longitude, v.name
+  FROM vancouver_po_go AS v
+  JOIN pokemon_by_gen AS p ON LOWER(v.name) = LOWER(p.name)
+  WHERE p.type1 = 'ground' OR p.type2 = 'ground'"
+
+ground_poke <- dbGetQuery(connect, ground_poke_query)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(ground_poke, aes(x = longitude, y = latitude)) +
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.4) +
+  geom_point(color = "saddlebrown", size = 1.5, alpha = 0.8) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    title = "Vancouver Ground-Type Pokémon Density & Locations",
+    subtitle = "2D Density Contour and Geographic Coordinates",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Density Level"
+  ) +
+  theme_minimal()
+ggsave("assets/vancouver_kde_density.png", width = 8, height = 5, dpi = 300)
+```
+
+```{r}
+ggsave("assets/vancouver_kde_density.png", width = 8, height = 5, dpi = 300)
+```
+
+QUESTION 6:
+
+```{r}
+dbSendQuery(connect, "DROP VIEW IF EXISTS tot_meds")
+```
+
+```{r}
+dbListTables(connect)
+```
+
+```{r}
+
+# 1. Save Population Z-Scores Plot
+pop_data <- dbGetQuery(connect, 'SELECT Geographic_name, "Population__2016" FROM POP2016 WHERE Geographic_name != "Canada"')
+pop_data <- pop_data %>%
+  mutate(
+    mean_val = mean(Population__2016, na.rm = TRUE),
+    sd_val = sd(Population__2016, na.rm = TRUE),
+    z_score_pop = (Population__2016 - mean_val) / sd_val
+  )
+
+p_pop <- ggplot(pop_data, aes(x = z_score_pop)) +
+  geom_histogram(bins = 15, fill = "steelblue", color = "white", na.rm = TRUE) +
+  labs(
+    title = "Histogram of Standardized 2016 Regional Populations",
+    subtitle = "Excluding Canada to remove extreme skewness",
+    x = "Z-Score (Standardized Population)",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+ggsave("assets/population_zscores.png", plot = p_pop, width = 8, height = 5, dpi = 300)
+
+# 2. Save Vancouver Pokémon Density Plot
+ground_poke_query <- "
+SELECT v.latitude, v.longitude, v.name
+FROM vancouver_po_go AS v
+JOIN pokemon_by_gen AS p ON LOWER(v.name) = LOWER(p.name)
+WHERE p.type1 = 'ground' OR p.type2 = 'ground';
+"
+ground_poke <- dbGetQuery(connect, ground_poke_query)
+
+p_poke <- ggplot(ground_poke, aes(x = longitude, y = latitude)) +
+  stat_density_2d(aes(fill = after_stat(level)), geom = "polygon", alpha = 0.4) +
+  geom_point(color = "saddlebrown", size = 1.5, alpha = 0.8) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(
+    title = "Vancouver Ground-Type Pokémon Density & Locations",
+    subtitle = "2D Density Contour and Geographic Coordinates",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Density Level"
+  ) +
+  theme_minimal()
+
+ggsave("assets/vancouver_kde_density.png", plot = p_poke, width = 8, height = 5, dpi = 300)
+```
